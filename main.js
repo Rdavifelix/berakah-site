@@ -1,4 +1,4 @@
-/* New Horizon Repair Services, site behaviour (no dependencies). Hooks are data-attributes so markup can change freely. */
+/* Berakah Remodeling, site behaviour (no dependencies). Hooks are data-attributes so markup can change freely. */
 (function () {
   'use strict';
   var d = document, w = window;
@@ -103,114 +103,22 @@
   $$('a[href^="mailto:"]').forEach(function (a) { a.addEventListener('click', function () { track('click_email', { link_url: a.href }); }); });
   $$('[data-track]').forEach(function (a) { a.addEventListener('click', function () { track(a.getAttribute('data-track'), { link_text: (a.textContent || '').trim().slice(0, 60) }); }); });
 
-  /* ---------- Quote form: validation + async submit ---------- */
-  /* Same limits and option lists as api/_lib/quote-core.js; the server is the source of truth. */
-  var PROJECT_TYPES = ['kitchen', 'bathroom', 'whole-home', 'adu-garage', 'pool-backyard', 'landscape', 'repair', 'commercial', 'other'];
-  var BUDGETS = ['under-10k', '10k-30k', '30k-75k', '75k-plus', 'not-sure'];
-  function usPhone(v) { var n = v.replace(/\D/g, ''); if (n.length === 11 && n.charAt(0) === '1') n = n.slice(1); return n.length === 10 ? n : ''; }
-  var RULES = {
-    name: function (v) { v = v.trim(); if (v.length < 2) return 'Enter your full name.'; if (v.length > 80) return 'Keep your name to 80 characters or fewer.'; return true; },
-    phone: function (v) { if (!v.trim()) return 'Enter your phone number so we can call you back.'; return !!usPhone(v) || 'Enter a 10-digit US phone number.'; },
-    email: function (v) { v = v.trim(); if (!v) return 'Enter your email address.'; return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v) || 'Enter a valid email address, like name@example.com.'; },
-    city: function (v) { v = v.trim(); if (v.length < 2) return 'Enter the city where the project is.'; if (v.length > 60) return 'Keep the city name to 60 characters or fewer.'; return true; },
-    project_type: function (v) { return PROJECT_TYPES.indexOf(v) !== -1 || 'Choose the type of project.'; },
-    budget: function (v) { return BUDGETS.indexOf(v) !== -1 || 'Choose a budget range. Not sure yet is fine.'; },
-    message: function (v) { v = v.trim(); if (v.length < 10) return 'Tell us what you need, in at least a few words.'; if (v.length > 2000) return 'Keep your message to 2,000 characters or fewer.'; return true; },
-    source: function (v) { return v.trim().length <= 80 || 'Keep this to 80 characters or fewer.'; }
-  };
-  $$('form[data-quote-form]').forEach(function (form) {
-    var ts = form.querySelector('input[name="_ts"]'); if (ts) ts.value = String(Date.now());
-    var pg = form.querySelector('input[name="_page"]'); if (pg) pg.value = location.pathname;
-    var status = form.querySelector('[data-form-status]');
-    var submitBtn = form.querySelector('[type="submit"]');
-    function errEl(name) { return form.querySelector('[data-error-for="' + name + '"]'); }
-    function setError(el, msg) {
-      var name = el.name, box = errEl(name);
-      if (box) { box.textContent = msg || ''; box.hidden = !msg; }
-      el.setAttribute('aria-invalid', msg ? 'true' : 'false');
-      (el.closest('.field') || el.parentElement).classList.toggle('has-error', !!msg);
-    }
-    function validateField(el) {
-      var rule = RULES[el.name]; if (!rule) return true;
-      var r = rule(el.value, el); setError(el, r === true ? '' : r); return r === true;
-    }
-    form.setAttribute('novalidate', 'novalidate');
-    $$('input, select, textarea', form).forEach(function (el) {
-      el.addEventListener('blur', function () { validateField(el); });
-      el.addEventListener('input', function () { if (el.getAttribute('aria-invalid') === 'true') validateField(el); });
-    });
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var ok = true, first = null;
-      $$('input, select, textarea', form).forEach(function (el) { if (!validateField(el)) { ok = false; first = first || el; } });
-      if (!ok) { if (first) first.focus(); if (status) { status.textContent = 'Please fix the highlighted fields.'; status.className = 'form-status is-error'; } return; }
-      if (d.querySelector('meta[name="preview-mode"]')) {
-        if (status) { status.textContent = 'This is a preview of the new site, so the form is not connected yet. Please call (949) 939-6445 or email contact@newhorizonrepairservices.com.'; status.className = 'form-status is-pending'; }
-        return;
-      }
-      var data = {};
-      new FormData(form).forEach(function (v, k) { data[k] = v; });
-      if (status) { status.textContent = 'Sending your request…'; status.className = 'form-status is-pending'; }
-      if (submitBtn) { submitBtn.disabled = true; submitBtn.setAttribute('aria-busy', 'true'); }
-      fetch(form.getAttribute('action') || '/api/quote', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(data) })
-        .then(function (r) { return r.json().then(function (j) { return { r: r, j: j }; }); })
-        .then(function (x) {
-          if (x.j && x.j.ok) {
-            track('generate_lead', { project_type: data.project_type || '', budget: data.budget || '' });
-            if (status) { status.textContent = 'Thanks. We received your request and will be in touch soon. Need it sooner? Call (949) 939-6445.'; status.className = 'form-status is-success'; }
-            w.location.assign(x.j.redirect || '/thank-you');
-            return;
-          }
-          if (x.j && x.j.errors) { Object.keys(x.j.errors).forEach(function (k) { var el = form.querySelector('[name="' + k + '"]'); if (el) setError(el, x.j.errors[k]); }); }
-          if (status) { status.textContent = (x.j && x.j.error) || 'Something went wrong. Please try again or call (949) 939-6445.'; status.className = 'form-status is-error'; }
-          if (w.turnstile && form.querySelector('.cf-turnstile')) { try { w.turnstile.reset(); } catch (err) {} }
-        })
-        .catch(function () { if (status) { status.textContent = 'We could not send your request. Please call (949) 939-6445 or email contact@newhorizonrepairservices.com.'; status.className = 'form-status is-error'; } })
-        .then(function () { if (submitBtn) { submitBtn.disabled = false; submitBtn.removeAttribute('aria-busy'); } });
-    });
+  /* ---------- "Get a Free Estimate" opens the GoHighLevel chat widget ----------
+     The chat is the only opt-in on the site. Until the widget has loaded, the button keeps
+     its plain href (the contact page, or a phone call on the contact page itself). */
+  function chatApi() { var lc = w.leadConnector; return lc && lc.chatWidget && typeof lc.chatWidget.openWidget === 'function' ? lc.chatWidget : null; }
+  function openChat(trigger) {
+    var api = chatApi(); if (!api) return false;
+    api.openWidget();
+    track('open_chat', { link_text: trigger ? (trigger.textContent || '').trim().slice(0, 60) : '' });
+    return true;
+  }
+  d.addEventListener('click', function (e) {
+    var opener = e.target && e.target.closest ? e.target.closest('[data-quote-open]') : null;
+    if (opener && openChat(opener)) e.preventDefault();
   });
-
-  /* ---------- Quote modal (GoHighLevel form) ----------
-     Every "Get a Free Estimate" button carries data-quote-open. With JavaScript it opens the
-     dialog and loads the hosted form in an iframe on first open. Without JavaScript the same
-     button stays a plain link to that hosted form, so the call to action never dead-ends. */
-  var modal = $('[data-quote-modal]');
-  if (modal) {
-    var frame = $('[data-quote-frame]', modal);
-    var loading = $('[data-quote-loading]', modal);
-    var frameLoaded = false;
-    var lastFocus = null;
-    var hideLoading = function () { if (loading) loading.hidden = true; };
-    if (frame) frame.addEventListener('load', function () { if (frameLoaded) hideLoading(); });
-
-    var openModal = function (trigger) {
-      lastFocus = trigger || d.activeElement;
-      if (!frameLoaded && frame) { frameLoaded = true; frame.src = frame.getAttribute('data-src'); w.setTimeout(hideLoading, 8000); }
-      if (typeof modal.showModal === 'function') modal.showModal(); else modal.setAttribute('open', '');
-      d.documentElement.classList.add('modal-open');
-      track('open_quote_form', { link_text: trigger ? (trigger.textContent || '').trim().slice(0, 60) : '' });
-    };
-    var closeModal = function () {
-      if (typeof modal.close === 'function') modal.close(); else modal.removeAttribute('open');
-      d.documentElement.classList.remove('modal-open');
-      if (lastFocus && lastFocus.focus) lastFocus.focus();
-    };
-    d.addEventListener('click', function (e) {
-      var t = e.target;
-      if (!t || !t.closest) return;
-      var opener = t.closest('[data-quote-open]');
-      if (opener) { e.preventDefault(); openModal(opener); return; }
-      if (t.closest('[data-quote-close]')) { e.preventDefault(); closeModal(); return; }
-      if (t === modal) { // click landed on the backdrop, not on the dialog box
-        var b = modal.getBoundingClientRect();
-        if (e.clientX < b.left || e.clientX > b.right || e.clientY < b.top || e.clientY > b.bottom) closeModal();
-      }
-    });
-    modal.addEventListener('close', function () { d.documentElement.classList.remove('modal-open'); });
-    modal.addEventListener('cancel', function () { d.documentElement.classList.remove('modal-open'); });
-    if (/[?&]quote(=|&|$)/.test(location.search) || location.hash === '#quote') {
-      w.addEventListener('load', function () { openModal(null); });
-    }
+  if (/[?&]quote(=|&|$)/.test(location.search) || location.hash === '#quote') {
+    var waited = 0, waitChat = setInterval(function () { if (openChat(null) || ++waited > 40) clearInterval(waitChat); }, 250);
   }
 
   /* ---------- Decode lazy photos as they arrive, so the before/after handle never reveals a half-decoded frame ---------- */
@@ -262,6 +170,25 @@
     if (m) openPrivate(m[1]);
   }
 
-  /* ---------- Contact page: show server-side error after non-JS redirect ---------- */
-  if (/[?&]error=1/.test(location.search)) { var s = $('[data-form-status]'); if (s) { s.textContent = 'We could not send your request. Please check the form and try again, or call (949) 939-6445.'; s.className = 'form-status is-error'; } }
+})();
+
+/* ---------- GHL chat widget: keep the bubble above the fixed .mobile-cta bar on phones ----------
+   The widget renders inside a shadow root, so page CSS cannot reach it; we inject a <style> there. */
+(function () {
+  var CSS = '@media(max-width:899px){.bk-chat-lift{bottom:92px!important}}';
+  function lift(host) {
+    var sr = host.shadowRoot; if (!sr) return false;
+    if (!sr.querySelector('style[data-bk-chat-lift]')) { var st = document.createElement('style'); st.setAttribute('data-bk-chat-lift', ''); st.textContent = CSS; sr.appendChild(st); }
+    sr.querySelectorAll('*').forEach(function (el) {
+      if (el.classList.contains('bk-chat-lift') || el.tagName === 'STYLE') return;
+      var cs = getComputedStyle(el);
+      if (cs.position === 'fixed' && parseFloat(cs.bottom) < 48) el.classList.add('bk-chat-lift');
+    });
+    if (!sr.__bkObserved) { sr.__bkObserved = true; new MutationObserver(function () { lift(host); }).observe(sr, { childList: true, subtree: true }); }
+    return true;
+  }
+  var tries = 0, t = setInterval(function () {
+    var host = document.querySelector('chat-widget');
+    if ((host && lift(host)) || ++tries > 60) clearInterval(t);
+  }, 500);
 })();

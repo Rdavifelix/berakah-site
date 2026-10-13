@@ -103,23 +103,22 @@
   $$('a[href^="mailto:"]').forEach(function (a) { a.addEventListener('click', function () { track('click_email', { link_url: a.href }); }); });
   $$('[data-track]').forEach(function (a) { a.addEventListener('click', function () { track(a.getAttribute('data-track'), { link_text: (a.textContent || '').trim().slice(0, 60) }); }); });
 
-  /* ---------- "Get a Free Estimate" opens the GoHighLevel chat widget ----------
-     The chat is the only opt-in on the site. Until the widget has loaded, the button keeps
-     its plain href (the contact page, or a phone call on the contact page itself). */
-  function chatApi() { var lc = w.leadConnector; return lc && lc.chatWidget && typeof lc.chatWidget.openWidget === 'function' ? lc.chatWidget : null; }
-  function openChat(trigger) {
-    var api = chatApi(); if (!api) return false;
-    api.openWidget();
-    track('open_chat', { link_text: trigger ? (trigger.textContent || '').trim().slice(0, 60) : '' });
+  /* ---------- "Get a Free Estimate" goes to the form on /contact ----------
+     Every button is a plain link to /contact. On /contact itself it scrolls to the form instead of
+     reloading. The GoHighLevel chat stays available as the bubble on every page. */
+  var quoteBox = $('#quote');
+  var goToForm = function () {
+    if (!quoteBox) return false;
+    var first = $('#q-name');
+    quoteBox.scrollIntoView({ block: 'start' });
+    if (first) first.focus({ preventScroll: true });
     return true;
-  }
+  };
   d.addEventListener('click', function (e) {
     var opener = e.target && e.target.closest ? e.target.closest('[data-quote-open]') : null;
-    if (opener && openChat(opener)) e.preventDefault();
+    if (opener && quoteBox && !opener.closest('#quote')) { e.preventDefault(); goToForm(); }
   });
-  if (/[?&]quote(=|&|$)/.test(location.search) || location.hash === '#quote') {
-    var waited = 0, waitChat = setInterval(function () { if (openChat(null) || ++waited > 40) clearInterval(waitChat); }, 250);
-  }
+  if (quoteBox && (/[?&]quote(=|&|$)/.test(location.search) || location.hash === '#quote')) w.addEventListener('load', goToForm);
 
   /* ---------- Decode lazy photos as they arrive, so the before/after handle never reveals a half-decoded frame ---------- */
   $$('main img[loading="lazy"]').forEach(function (img) {

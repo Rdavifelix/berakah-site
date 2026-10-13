@@ -103,23 +103,84 @@
   $$('a[href^="mailto:"]').forEach(function (a) { a.addEventListener('click', function () { track('click_email', { link_url: a.href }); }); });
   $$('[data-track]').forEach(function (a) { a.addEventListener('click', function () { track(a.getAttribute('data-track'), { link_text: (a.textContent || '').trim().slice(0, 60) }); }); });
 
-  /* ---------- "Get a Free Estimate" opens the GoHighLevel chat widget ----------
-     The chat is the only opt-in on the site. Until the widget has loaded, the button keeps
-     its plain href (the contact page, or a phone call on the contact page itself). */
-  function chatApi() { var lc = w.leadConnector; return lc && lc.chatWidget && typeof lc.chatWidget.openWidget === 'function' ? lc.chatWidget : null; }
-  function openChat(trigger) {
-    var api = chatApi(); if (!api) return false;
-    api.openWidget();
-    track('open_chat', { link_text: trigger ? (trigger.textContent || '').trim().slice(0, 60) : '' });
+  /* ---------- "Get a Free Estimate" goes to the form on /contact ----------
+     Every button is a plain link to /contact. On /contact itself it scrolls to the form instead of
+     reloading. The GoHighLevel chat stays available as the bubble on every page. */
+  var quoteBox = $('#quote');
+  var goToForm = function () {
+    if (!quoteBox) return false;
+    var first = $('#q-name');
+    quoteBox.scrollIntoView({ block: 'start' });
+    if (first) first.focus({ preventScroll: true });
     return true;
-  }
+  };
   d.addEventListener('click', function (e) {
     var opener = e.target && e.target.closest ? e.target.closest('[data-quote-open]') : null;
-    if (opener && openChat(opener)) e.preventDefault();
+    if (opener && quoteBox && !opener.closest('#quote')) { e.preventDefault(); goToForm(); }
   });
-  if (/[?&]quote(=|&|$)/.test(location.search) || location.hash === '#quote') {
-    var waited = 0, waitChat = setInterval(function () { if (openChat(null) || ++waited > 40) clearInterval(waitChat); }, 250);
-  }
+  if (quoteBox && (/[?&]quote(=|&|$)/.test(location.search) || location.hash === '#quote')) w.addEventListener('load', goToForm);
+
+  /* ---------- Quote form: validation + send to the GoHighLevel inbound webhook ----------
+     The webhook URL lives in the form's data-webhook attribute. A GHL workflow with an
+     "Inbound Webhook" trigger receives the JSON below and creates or updates the contact. */
+  var PROJECT_TYPES = ['decks-porches', 'addition', 'kitchen-bath', 'interior-carpentry', 'siding-roofing', 'commercial', 'other'];
+  var BUDGETS = ['under-10k', '10k-30k', '30k-75k', '75k-plus', 'not-sure'];
+  function usPhone(v) { var n = v.replace(/\D/g, ''); if (n.length === 11 && n.charAt(0) === '1') n = n.slice(1); return n.length === 10 ? n : ''; }
+  var RULES = {
+    name: function (v) { v = v.trim(); if (v.length < 2) return 'Enter your full name.'; if (v.length > 80) return 'Keep your name to 80 characters or fewer.'; return true; },
+    phone: function (v) { if (!v.trim()) return 'Enter your phone number so we can call you back.'; return !!usPhone(v) || 'Enter a 10-digit US phone number.'; },
+    email: function (v) { v = v.trim(); if (!v) return 'Enter your email address.'; return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v) || 'Enter a valid email address, like name@example.com.'; },
+    city: function (v) { v = v.trim(); if (v.length < 2) return 'Enter the town where the project is.'; if (v.length > 60) return 'Keep the town name to 60 characters or fewer.'; return true; },
+    project_type: function (v) { return PROJECT_TYPES.indexOf(v) !== -1 || 'Choose the type of project.'; },
+    budget: function (v) { return BUDGETS.indexOf(v) !== -1 || 'Choose a budget range. Not sure yet is fine.'; },
+    message: function (v) { v = v.trim(); if (v.length < 10) return 'Tell us what you need, in at least a few words.'; if (v.length > 2000) return 'Keep your message to 2,000 characters or fewer.'; return true; },
+    source: function (v) { return v.trim().length <= 80 || 'Keep this to 80 characters or fewer.'; }
+  };
+  var CALL_US = 'Please call (781) 818-1828 or email berakahremodeling2122@gmail.com.';
+  $$('form[data-quote-form]').forEach(function (form) {
+    var status = form.querySelector('[data-form-status]');
+    var submitBtn = form.querySelector('[type="submit"]');
+    var opened = Date.now();
+    function say(msg, kind) { if (status) { status.textContent = msg; status.className = 'form-status' + (kind ? ' is-' + kind : ''); } }
+    function setError(el, msg) {
+      var box = form.querySelector('[data-error-for="' + el.name + '"]');
+      if (box) { box.textContent = msg || ''; box.hidden = !msg; }
+      el.setAttribute('aria-invalid', msg ? 'true' : 'false');
+      (el.closest('.field') || el.parentElement).classList.toggle('has-error', !!msg);
+    }
+    function validateField(el) { var rule = RULES[el.name]; if (!rule) return true; var r = rule(el.value); setError(el, r === true ? '' : r); return r === true; }
+    function label(name) { var el = form.elements[name]; return el && el.options ? el.options[el.selectedIndex].text : ''; }
+    form.setAttribute('novalidate', 'novalidate');
+    $$('input, select, textarea', form).forEach(function (el) {
+      el.addEventListener('blur', function () { validateField(el); });
+      el.addEventListener('input', function () { if (el.getAttribute('aria-invalid') === 'true') validateField(el); });
+    });
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var ok = true, first = null;
+      $$('input, select, textarea', form).forEach(function (el) { if (!validateField(el)) { ok = false; first = first || el; } });
+      if (!ok) { if (first) first.focus(); say('Please fix the highlighted fields.', 'error'); return; }
+      var f = form.elements, hook = form.getAttribute('data-webhook');
+      if ((f._hp && f._hp.value) || Date.now() - opened < 2500) { w.location.assign('/thank-you'); return; }  // bots
+      if (!hook) { say('The form is not connected yet. ' + CALL_US, 'error'); return; }
+      var name = f.name.value.trim().replace(/\s+/g, ' '), cut = name.indexOf(' ');
+      var data = {
+        full_name: name, first_name: cut > 0 ? name.slice(0, cut) : name, last_name: cut > 0 ? name.slice(cut + 1) : '',
+        phone: '+1' + usPhone(f.phone.value), email: f.email.value.trim(), city: f.city.value.trim(),
+        project_type: label('project_type'), budget: label('budget'), message: f.message.value.trim(), source: f.source.value.trim(),
+        sms_consent: f.sms_consent && f.sms_consent.checked ? 'yes' : 'no', page: location.href, submitted_at: new Date().toISOString()
+      };
+      say('Sending your request…', 'pending');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.setAttribute('aria-busy', 'true'); }
+      var done = function () { track('generate_lead', { project_type: data.project_type, budget: data.budget }); w.location.assign('/thank-you'); };
+      fetch(hook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); done(); })
+        .catch(function () {
+          say('We could not send your request. ' + CALL_US, 'error');
+          if (submitBtn) { submitBtn.disabled = false; submitBtn.removeAttribute('aria-busy'); }
+        });
+    });
+  });
 
   /* ---------- Decode lazy photos as they arrive, so the before/after handle never reveals a half-decoded frame ---------- */
   $$('main img[loading="lazy"]').forEach(function (img) {
